@@ -43,6 +43,7 @@ the program shuts down once n users have completed their transfer
 #include <stdio.h>
 #include <pthread.h>
 
+#include "fs.h"
 #include "kq.h"
 
 /* this should ideally come from libashnet/packet_storage.h */
@@ -99,17 +100,6 @@ are not from the expected mac address
 
 #endif
 
-struct file{
-    char* fn;
-    pthread_mutex_t transfer_lock;
-    struct file* next;
-};
-
-struct filesys{
-    struct file** buckets;
-    int n_buckets;
-};
-
 struct kq_info{
     key_t key_incoming, key_outgoing;
     // to mark which ports are in use - for now there's no concurrent comm
@@ -119,51 +109,6 @@ struct kq_info{
     uint8_t control_port;
 };
 
-void init_fs(struct filesys* fs, int n_buckets){
-    fs->n_buckets = n_buckets;
-    fs->buckets = calloc(sizeof(struct file*), fs->n_buckets);
-}
-
-struct file* add_file(struct filesys* fs, char* fn){
-    struct file* f = malloc(sizeof(struct file));
-    int idx;
-    for(char* i = fn; *i; ++i)
-        idx += (i-fn+1)*(*i);
-    idx %= fs->n_buckets;
-    f->fn = fn;
-    f->next = fs->buckets[idx];
-    fs->buckets[idx] = f;
-    return f; 
-}
-
-struct file* _iter_fs(struct filesys* fs, char* fn, size_t fnlen, _Bool exact){
-    struct file* prev;
-    for(int i = 0; i < fs->n_buckets; ++i){
-        prev = NULL;
-        for(struct file* f = fs->buckets[i]; f; f = f->next){
-            if(!fn){
-                if(prev)free(prev);
-                prev = f;
-                continue;
-            }
-            if(exact && strlen(f->fn) != fnlen)continue;
-            if(!memcmp(fn, f->fn, fnlen))return f;
-            if(!exact && strstr(f->fn, fn))return f;
-        }
-        if(prev)free(prev);
-    }
-    if(!fn)free(fs->buckets);
-    return NULL;
-}
-
-struct file* lookup_file(struct filesys* fs, char* fn, _Bool exact){
-    size_t fnlen = strlen(fn);
-    return _iter_fs(fs, fn, fnlen, exact);
-}
-
-void free_fs(struct filesys* fs){
-    _iter_fs(fs, NULL, -1, 0);
-}
 
 void init_kq_info(struct kq_info* kqi, key_t incoming, key_t outgoing, uint8_t control_port){
     kqi->key_incoming = incoming;
@@ -234,11 +179,13 @@ void p_addr(uint8_t* addr){
 
 int main(){
     struct filesys fs;
-    struct file* a, * b;
+    struct file* a, * b, * c;
     init_fs(&fs, 10000);
     a = add_file(&fs, "FILE");
     b = add_file(&fs, "file number two.txt");
-    if(a != lookup_file(&fs, "FILE", 1) || a != lookup_file(&fs, "F", 0))puts("FAILED LOOKUP");
+    c = add_file(&fs, "IFLE");
+    if(a != lookup_file(&fs, "FILE", 1) || a != lookup_file(&fs, "FIL", 0))puts("FAILED LOOKUP");
     if(b != lookup_file(&fs, "file number two.txt", 1) || b != lookup_file(&fs, "txt", 0))puts("FAILED LOOKUP");
+    if(c != lookup_file(&fs, "IFLE", 1) || c != lookup_file(&fs, "IF", 0))puts("FAILED LOOKUP");
     free_fs(&fs);
 }
