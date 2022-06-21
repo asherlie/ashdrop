@@ -136,17 +136,33 @@ struct file* add_file(struct filesys* fs, char* fn){
     return f; 
 }
 
-struct file* lookup_file(struct filesys* fs, char* fn, _Bool exact){
-    size_t fnlen = strlen(fn), tmplen;
+struct file* _iter_fs(struct filesys* fs, char* fn, size_t fnlen, _Bool exact){
+    struct file* prev;
     for(int i = 0; i < fs->n_buckets; ++i){
+        prev = NULL;
         for(struct file* f = fs->buckets[i]; f; f = f->next){
-            tmplen = strlen(f->fn);
-            if(exact && tmplen != fnlen)continue;
+            if(!fn){
+                if(prev)free(prev);
+                prev = f;
+                continue;
+            }
+            if(exact && strlen(f->fn) != fnlen)continue;
             if(!memcmp(fn, f->fn, fnlen))return f;
             if(!exact && strstr(f->fn, fn))return f;
         }
+        if(prev)free(prev);
     }
+    if(!fn)free(fs->buckets);
     return NULL;
+}
+
+struct file* lookup_file(struct filesys* fs, char* fn, _Bool exact){
+    size_t fnlen = strlen(fn);
+    return _iter_fs(fs, fn, fnlen, exact);
+}
+
+void free_fs(struct filesys* fs){
+    _iter_fs(fs, NULL, -1, 0);
 }
 
 void init_kq_info(struct kq_info* kqi, key_t incoming, key_t outgoing, uint8_t control_port){
@@ -224,4 +240,5 @@ int main(){
     b = add_file(&fs, "file number two.txt");
     if(a != lookup_file(&fs, "FILE", 1) || a != lookup_file(&fs, "F", 0))puts("FAILED LOOKUP");
     if(b != lookup_file(&fs, "file number two.txt", 1) || b != lookup_file(&fs, "txt", 0))puts("FAILED LOOKUP");
+    free_fs(&fs);
 }
