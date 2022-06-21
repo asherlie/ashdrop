@@ -106,7 +106,7 @@ struct file{
 };
 
 struct filesys{
-    struct file* buckets;
+    struct file** buckets;
     int n_buckets;
 };
 
@@ -118,6 +118,22 @@ struct kq_info{
     uint8_t transfer_port;
     uint8_t control_port;
 };
+
+void init_fs(struct filesys* fs, int n_buckets){
+    fs->n_buckets = n_buckets;
+    fs->buckets = calloc(sizeof(struct file*), fs->n_buckets);
+}
+
+struct file* add_file(struct filesys* fs, char* fn){
+    struct file* f = malloc(sizeof(struct file));
+    int idx;
+    for(char* i = fn; *i; ++i)
+        idx += *i;
+    f->fn = fn;
+    f->next = fs->buckets[idx];
+    fs->buckets[idx] = f;
+    return f; 
+}
 
 void init_kq_info(struct kq_info* kqi, key_t incoming, key_t outgoing, uint8_t control_port){
     kqi->key_incoming = incoming;
