@@ -136,6 +136,19 @@ struct file* add_file(struct filesys* fs, char* fn){
     return f; 
 }
 
+struct file* lookup_file(struct filesys* fs, char* fn, _Bool exact){
+    size_t fnlen = strlen(fn), tmplen;
+    for(int i = 0; i < fs->n_buckets; ++i){
+        for(struct file* f = fs->buckets[i]; f; f = f->next){
+            tmplen = strlen(f->fn);
+            if(exact && tmplen != fnlen)continue;
+            if(!memcmp(fn, f->fn, fnlen))return f;
+            if(!exact && strstr(f->fn, fn))return f;
+        }
+    }
+    return NULL;
+}
+
 void init_kq_info(struct kq_info* kqi, key_t incoming, key_t outgoing, uint8_t control_port){
     kqi->key_incoming = incoming;
     kqi->key_outgoing = outgoing;
@@ -205,5 +218,10 @@ void p_addr(uint8_t* addr){
 
 int main(){
     struct filesys fs;
+    struct file* a, * b;
     init_fs(&fs, 10000);
+    a = add_file(&fs, "FILE");
+    b = add_file(&fs, "file number two.txt");
+    if(a != lookup_file(&fs, "FILE", 1) || a != lookup_file(&fs, "F", 0))puts("FAILED LOOKUP");
+    if(b != lookup_file(&fs, "file number two.txt", 1) || b != lookup_file(&fs, "txt", 0))puts("FAILED LOOKUP");
 }
