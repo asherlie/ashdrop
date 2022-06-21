@@ -128,7 +128,8 @@ struct file* add_file(struct filesys* fs, char* fn){
     struct file* f = malloc(sizeof(struct file));
     int idx;
     for(char* i = fn; *i; ++i)
-        idx += *i;
+        idx += (i-fn+1)*(*i);
+    idx %= fs->n_buckets;
     f->fn = fn;
     f->next = fs->buckets[idx];
     fs->buckets[idx] = f;
@@ -203,4 +204,6 @@ void p_addr(uint8_t* addr){
 }
 
 int main(){
+    struct filesys fs;
+    init_fs(&fs, 10000);
 }
