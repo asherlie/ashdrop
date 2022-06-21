@@ -48,124 +48,94 @@ the program shuts down once n users have completed their transfer
 /* this should ideally come from libashnet/packet_storage.h */
 #define DATA_BYTES 10
 
-struct transfer{
-    int offset;
-};
-
-struct transfer_packet{
-    int bytes;
-};
-
-struct fragment_request{
-    int offset, bytes;
-    struct fragment_request* next;
-};
-
-struct request_q{
-    /*we can be clever about this because we know the number of fragments although dupes are possible*/
-    struct fragment_request* first, * last;
-};
-
-struct addr_ll{
-    uint8_t addr[6];
-    struct request_q* rq;
-    struct addr_ll* next;
-};
-
 /* stores queues of received requests by mac address */
 // TODO: this is not needed anymore with new separate kq popping implementation
-struct request_storage{
-    struct addr_ll* buckets[1531];
+
+
+/*
+this must be blocking so that threads can wait on mac addr messages
+once messages arrive, we can broadcast the relevant chunk
+gonna be harder than i thought tho - bc all connecotrs are getting this...
+damn each connector who wants a file might need a separate mtype
+and an actual kq reader in each spawned thread
+
+this is the new design -
+
+offer up file
+thread pops control mtype kq waiting for requests
+connectors/requesters say they want the file
+
+control assigns port for this comm and communicates it to requester
+first person to respond on that channel
+
+if mtype is already taken, IGNORE or send a bad mtype response
+thread is spawned to pop kqs from mtype
+
+this thread handles fragment_requests as they arrive - offset and nbytes
+file is read incrementally as these requests arrive
+rewinds will never be necessary because we'll only progress once we've verified prev chunk
+only one request will be fulfilled at once because each thread will be reading from the same file
+
+we can just have a file lock in the peer port thread
+
+we can get rid of the fragment_request struct but keep the mac addr storage
+mac addr storage can be used as a whitelist for receivers - nvm actually
+this can all be intercepted anyway so the file should be encrypted by sender
+if they want any kind of security
+so we can get rid of all structs
+*/
+
+#if !1
+final implementation
+
+[we offer a file] - optional
+
+control_thread receives a file request containing name and size - (both must match) optional
+the requester knows about this info either from a file offer or user input
+
+control thread assigns a port to the tranasfer and communicates it with mac address to the receiver
+control thread spawns a new thread to read from specified port - all messages being received in this thread will be ignored if they
+are not from the expected mac address
+
+#endif
+
+struct file{
+    char* fn;
+    pthread_mutex_t transfer_lock;
+    struct file* next;
 };
 
-void init_request_storage(struct request_storage* rs){
-    memset(rs->buckets, 0, sizeof(struct addr_ll*)*1531);
+struct filesys{
+    struct file* buckets;
+    int n_buckets;
+};
+
+struct kq_info{
+    key_t key_incoming, key_outgoing;
+    // to mark which ports are in use - for now there's no concurrent comm
+    // but there's a limited amount of possible ports so we'll re-use old ones when needed
+    _Bool in_use[0xff+1];
+    uint8_t transfer_port;
+    uint8_t control_port;
+};
+
+void init_kq_info(struct kq_info* kqi, key_t incoming, key_t outgoing, uint8_t control_port){
+    kqi->key_incoming = incoming;
+    kqi->key_outgoing = outgoing;
+    kqi->control_port = control_port;
+    memset(kqi->in_use, 0, sizeof(uint8_t)*(0xff+1));
+    for(int i = 0; i < control_port+1; ++i)
+        kqi->in_use[i] = 1;
+    kqi->transfer_port = control_port+1;
 }
 
-void init_request_q(struct request_q* rq){
-    rq->first = rq->last = NULL;
-}
-
-void insert_request_q(struct request_q* rq, int offset, int bytes){
-    struct fragment_request* fr = malloc(sizeof(struct fragment_request));
-    fr->offset = offset;
-    fr->bytes = bytes;
-    fr->next = NULL;
-    if(!rq->first)rq->first = rq->last = fr;
-    else{
-        rq->last->next = fr;
-        rq->last = fr;
-    }
-}
-
-struct fragment_request* pop_request_q(struct request_q* rq){
-    struct fragment_request* fr = rq->first;
-    return fr;
+void* control_thread(void* v_kq_info){
+    struct kq_info* kqi = v_kq_info;
     /*
-    this must be blocking so that threads can wait on mac addr messages
-    once messages arrive, we can broadcast the relevant chunk
-    gonna be harder than i thought tho - bc all connecotrs are getting this...
-    damn each connector who wants a file might need a separate mtype
-    and an actual kq reader in each spawned thread
-
-    FUCK this is the new design - offer up file
-    thread pops control mtype kq waiting for requests
-    connectors/requesters specify their mtype
-
-    if mtype is already taken, IGNORE or send a bad mtype response
-    thread is spawned to pop kqs from mtype
-
-    this thread handles fragment_requests as they arrive - offset and nbytes
-    file is read incrementally as these requests arrive
-    rewinds will never be necessary because we'll only progress once we've verified prev chunk
-    only one request will be fulfilled at once because each thread will be reading from the same file
-
-    we can just have a file lock in the peer port thread
-
-    we can get rid of the fragment_request struct but keep the mac addr storage
-    mac addr storage can be used as a whitelist for receivers - nvm actually
-    this can all be intercepted anyway so the file should be encrypted by sender
-    if they want any kind of security
-    so we can get rid of all structs
-    */
-}
-
-int sum_addr(uint8_t* addr){
-    int ret = 0;
-    for(int i = 0; i < 6; ++i)
-        ret += addr[i];
-    return ret;
-}
-
-struct addr_ll* lookup_addr(struct request_storage* rs, uint8_t* addr, _Bool create){
-    int idx = sum_addr(addr);
-    struct addr_ll* ret;
-    for(ret = rs->buckets[idx]; ret; ret = ret->next){
-        if(!memcmp(ret->addr, addr, 6))break;
-    }
-    if(!create)return ret;
-    if(!ret){
-        ret = malloc(sizeof(struct addr_ll));
-        ret->rq = malloc(sizeof(struct request_q));
-        init_request_q(ret->rq);
-        memcpy(ret->addr, addr, 6);
-        ret->next = rs->buckets[idx];
-        rs->buckets[idx] = ret;
-    }
-    return ret;
-}
-
-void* msg_reader_thread(void* xx){
-    (void)xx;
-    /*
-     * reads from kq,
-     *     if mac address is new -> create entry, spawn thread
-     *     else -> add request to mac address specific request queue
-     *   nvm
-     *
      * reads from kq with conductor mtype/port,
      *     spawns new thread to read from specified port 
     */
+    pop_kq(kqi->key_incoming, kqi->control_port, NULL);
     return NULL;
 }
 
@@ -195,13 +165,17 @@ _Bool offer_file(key_t kq, uint8_t mtype, char* fn, char* to){
 }
 
 // there can be a standard ashdrop control port
-_Bool recv_file(key_t kq, uint8_t mtype, uint8_t comm_port){
-    uint8_t* recvd = pop_kq(kq, mtype, NULL);
+// TODO: a selection system is needed - maybe get_file_offers()
+// TODO: all messages should be of a standard type - int, n_data_bytes, etc.
+// and accept_offer()
+_Bool recv_file(struct kq_info* kqi, uint8_t comm_port){
+    uint8_t* recvd = pop_kq(kqi->key_incoming, kqi->control_port, NULL);
     char* fn = (char*)recvd + sizeof(long);
     long bytes;
 
     memcpy(&bytes, recvd, sizeof(long));
     printf("recvd offer for file %s of size %li\n", fn, bytes);
+    insert_kq(&comm_port, sizeof(uint8_t), kqi->key_outgoing, kqi->control_port);
     return 1;
 }
 
@@ -213,11 +187,4 @@ void p_addr(uint8_t* addr){
 }
 
 int main(){
-    uint8_t addr[6] = {0, 1, 2, 3, 4, 5};
-    struct addr_ll* ll;
-    struct request_storage rs;
-    init_request_storage(&rs);
-    ll = lookup_addr(&rs, addr, 1);
-    insert_request_q(ll->rq, 0, DATA_BYTES);
-    p_addr(ll->addr);
 }
