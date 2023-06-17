@@ -1,0 +1,18 @@
+okay, for my new ashnet feature ashdrop:
+    file transfer protocol
+
+    0:
+        sender broadcasts file in chunks of n bytes
+        each chunk is prepended by 8 bytes - index|totalbytes
+    1:
+        receivers see a message on the msgid of ashdrop
+        they either start recording or don't
+        receivers store each chunk in memory 
+
+notes:
+    users will specify an ashdrop_dir for files to appear in
+    users will specify their file acceptance settings - accept all, all under a certain size, etc
+    these are all specified with aruments to the ashdrop daemon
+
+possible improvements:
+    sequential chunks should be written to disk when possible
