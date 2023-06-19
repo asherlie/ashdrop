@@ -3,19 +3,60 @@ okay, for my new ashnet feature ashdrop:
 
     0:
         sender broadcasts file in chunks of n bytes
-        each chunk is prepended by 8 bytes - index|totalbytes/totalchunks
+        each chunk is prepended by a header - file_id|chunksz|index|(totalbytes/totalchunks)
+        // this header is used for both chunk requests and chunk broadcasts
+        // enum operation will only have two options for now - request and fulfill
+        struct header{
+            enum operation;
+            uint16_t file_id;
+            uint16_t chunksz;
+            uint16_t index/offset;
+            uint16_t totalbytes/totalchunks;
+            // variable size data buffer, NULL for requests
+            uint8_t* buffer;
+        };
         probably makes more sense to have it in terms of bytes
+
+        // file_id is unique to a sender IP and is used to get a file name once a user requests the name
+        associated with an id
     1:
         receivers see a message on the msgid of ashdrop
         they either start recording or ignore altogether, stop reading for ignore case
-        receivers allocate memory for totalbytes bytes and insert each 
-        receivers store each chunk in memory as they receive them (see note for improvement)
+        receivers create an entry in a struct that keeps track of files received
+        this will be used for initial chunks as well as filler chunks
+
+        struct ashdrop_entry{
+            char* fn, * from;
+            int chunksz, bytes
+            // both buf and chunk_filled will be the same size
+            uint8_t* buf;
+            _Bool* chunk_filled;
+        };
+        struct ashdrop_files{
+            int n_entries;
+            // in the future these will be indexable by sender IP
+            struct ashdrop_entry** files;
+        };
+        receivers allocate memory for totalbytes bytes and insert each chunk into its allocated space (see note for improvement)
+        and set the relevant chunk_filled space in ashdrop_entry
+    2:
+        receivers iterate over chunk_filled
+        if an unfilled chunk is found
     
 
 notes:
     users will specify an ashdrop_dir for files to appear in
     users will specify their file acceptance settings - accept all, all under a certain size, etc
     these are all specified with aruments to the ashdrop daemon
+
+    this architecture implicitly allows file requests
+
+    broadcaster should be able to set a max request fill setting
+
+    broadcaster will use the same structs to keep track of chunked data as they send it
+    and to make fulfilling requests easier,
+    although they could just not keep in memory actually and just fulfill requests by fread()ing
+
 
 possible improvements:
     sequential chunks should be written to disk when possible
