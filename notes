@@ -3,11 +3,14 @@ okay, for my new ashnet feature ashdrop:
 
     0:
         sender broadcasts file in chunks of n bytes
-        each chunk is prepended by 8 bytes - index|totalbytes
+        each chunk is prepended by 8 bytes - index|totalbytes/totalchunks
+        probably makes more sense to have it in terms of bytes
     1:
         receivers see a message on the msgid of ashdrop
-        they either start recording or don't
-        receivers store each chunk in memory 
+        they either start recording or ignore altogether, stop reading for ignore case
+        receivers allocate memory for totalbytes bytes and insert each 
+        receivers store each chunk in memory as they receive them (see note for improvement)
+    
 
 notes:
     users will specify an ashdrop_dir for files to appear in
