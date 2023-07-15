@@ -5,7 +5,8 @@ okay, for my new ashnet feature ashdrop:
         sender broadcasts file in chunks of n bytes
         each chunk is prepended by a header - file_id|chunksz|index|(totalbytes/totalchunks)
         // this header is used for both chunk requests and chunk broadcasts
-        // enum operation will only have two options for now - request and fulfill
+        // enum operation will have 4 options for now - request, request_fn, fulfill, inspect_chunk
+        // inspect_chunk will be a message sent to oneself
         struct header{
             enum operation;
             uint16_t file_id;
@@ -25,6 +26,11 @@ okay, for my new ashnet feature ashdrop:
         receivers create an entry in a struct that keeps track of files received
         this will be used for initial chunks as well as filler chunks
 
+        receivers will also trigger a timer. when this timer is up, each receiver will perform protocol
+        step #2. this is done using inspect_chunk self messages
+        a thread will be spawned that will wait n seconds before appending an inspect_chunk request to the
+        internal message queue
+
         struct ashdrop_entry{
             char* fn, * from;
             int chunksz, bytes
@@ -39,10 +45,36 @@ okay, for my new ashnet feature ashdrop:
         };
         receivers allocate memory for totalbytes bytes and insert each chunk into its allocated space (see note for improvement)
         and set the relevant chunk_filled space in ashdrop_entry
+
+        if totalbytes have been received, we queue up a request_fn message to get the file name associated with file_id
+        IFF we don't already have it - we could already have it if another receiver has requested it
     2:
         receivers iterate over chunk_filled
-        if an unfilled chunk is found
+        if an unfilled chunk is found, a chunk request message is queued up
+    3:
+        
     
+
+the following threads will be used:
+    message receive thread:
+        pops messages from the queue and:
+            accepts/rejects new files based on settings
+            delegates file requests and file chunks to the chunk operation thread
+    
+    chunk operation thread:
+        receives operations to fulfill from the msg recv thread
+        requests:
+            possibly create new ashdrop_entries if sender stores in memory
+            send out chunks
+        chunks:
+            create new ashdrop entry if this is the first we're hearing of a file
+                upon creating new entry, an inspect_chunk message is self-sent as well
+            insert chunk into entry
+        
+
+// when a file is sent out by a user it will be handled by spoofing requests for every chunk of a file
+// should there be a separate file builder thread so we don't waste time in message receiver?
+
 
 notes:
     users will specify an ashdrop_dir for files to appear in
@@ -56,6 +88,8 @@ notes:
     broadcaster will use the same structs to keep track of chunked data as they send it
     and to make fulfilling requests easier,
     although they could just not keep in memory actually and just fulfill requests by fread()ing
+
+    users can broadcast files that haven't been requested by manually inserting a request into the recv queue
 
 
 possible improvements:
